@@ -1,0 +1,200 @@
+---
+title: "Residential Locations of Military Personnel"
+format: 
+  html:
+    theme: minty
+    toc: true
+    toc-location: left
+editor: visual
+---
+
+The purpose of this analysis is to identify locations where military personnel live in Virginia, Hawaii, and Guam.
+
+I draw on the following datasets:
+
+-   The American Community Survey
+
+-   The Decennial Census of Island Areas
+
+This analysis uses the following R packages:
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(leaflet)
+library(knitr)
+library(here)
+```
+
+## American Community Survey
+
+Table B23025 in the American Community Survey includes data on the number of people over the age of 15 in each of the following employment categories:
+
+-   Total population over 15 (B23025_001)
+
+-   Total population in the labor force (B23025_002)
+
+-   Total population in the civilian labor force (B23025_003)
+
+-   Total employed population in the civilian labor force (B23025_004)
+
+-   Total unemployed population in the civilian labor force (B23025_005)
+
+-   Total population serving in the armed forces (B23025_006)
+
+-   Total population over 15 that is not in the labor force (B23025_007)
+
+```{r, message=FALSE, results='hide'}
+
+variable_set <- c(civil_ = "B23025_003",
+                  milit_ = "B23025_006")
+
+VA_workers <- get_acs(geography = "tract",
+                      variables = variable_set,
+                      state = "Virginia",
+                      output = "wide",
+                      geometry = TRUE) |>
+  filter(milit_E > 0) |>
+  st_transform("WGS84")
+
+HI_workers <- get_acs(geography = "tract",
+                      variables = variable_set,
+                      state = "Hawaii",
+                      output = "wide",
+                      geometry = TRUE)  |>
+  filter(milit_E > 0) |>
+  st_transform("WGS84")
+```
+
+Let's take a look at the first few rows of the Virginia data set:
+
+```{r}
+head(VA_workers) |>
+  st_drop_geometry() |>
+  kable()
+```
+
+You can see that we have an ID number for each census tract, a name of each census tract, and values for four variables:
+
+-   **civil_E:** The estimated number of civilian workers in the census tract.
+
+-   **civil_M:** The margin of error for that estimate a 90-percent confidence level
+
+-   **milit_E:** The estimated number of workers in the armed forces
+
+-   **milit_M:** The margin of error for that estimate at a 90-percent confidence level
+
+The Hawaii dataset has the same variables.
+
+We can visualize these data on a map. Here is Virginia:
+
+```{r}
+
+VA_palette <- colorNumeric("viridis", 
+                           domain = log10(VA_workers$milit_E),
+                           reverse = TRUE)
+
+VA_labels <- paste0(VA_workers$milit_E,
+                        " military personnel<br/>",
+                        VA_workers$civil_E,
+                        " civilian workers") |>
+  lapply(htmltools::HTML)
+
+leaflet(VA_workers) |>
+  addProviderTiles(provider = "CartoDB.Positron") |>
+  addPolygons(weight = 1,
+              color = NA,
+              fillColor = ~VA_palette(log10(milit_E)),
+              fillOpacity = 0.7,
+              highlightOptions = highlightOptions(weight = 3,
+                                                  fillOpacity = 0.5),
+              label = VA_labels) |>
+  addLegend(pal = VA_palette, 
+            values = ~log10(milit_E),
+            labFormat = labelFormat(prefix = "10^"),
+            opacity = 0.7, 
+            title = "Number of\narmed forces\npersonnel",
+  position = "bottomleft")
+```
+
+And here is Hawaii:
+
+```{r}
+HI_palette <- colorNumeric("viridis", 
+                           domain = log10(HI_workers$milit_E),
+                           reverse = TRUE)
+
+HI_labels <- paste0(HI_workers$milit_E,
+                        " military personnel<br/>",
+                        HI_workers$civil_E,
+                        " civilian workers") |>
+  lapply(htmltools::HTML)
+
+leaflet(HI_workers) |>
+  addProviderTiles(provider = "CartoDB.Positron") |>
+  addPolygons(weight = 1,
+              color = NA,
+              fillColor = ~HI_palette(log10(milit_E)),
+              fillOpacity = 0.7,
+              highlightOptions = highlightOptions(weight = 3,
+                                                  fillOpacity = 0.5),
+              label = HI_labels) |>
+  addLegend(pal = HI_palette, 
+            values = ~log10(milit_E),
+            labFormat = labelFormat(prefix = "10^"),
+            opacity = 0.7, 
+            title = "Number of\narmed forces\npersonnel",
+  position = "bottomleft")
+```
+
+And we can export these layers to a shapefile in case we want to work with them further in ArcGIS or QGIS.
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+st_write(VA_workers,
+           dsn = here("shapefiles",
+                      "Virginia"),
+           driver = "ESRI Shapefile",
+         append = FALSE)
+
+st_write(HI_workers,
+           dsn = here("shapefiles",
+                      "Hawaii"),
+           driver = "ESRI Shapefile",
+         append = FALSE)
+```
+
+## Decennial Island Area Census
+
+Guam is not included in the American Community Survey. Similar data is collected in the Island Area Survey as part of the decennial census. Table DP3 includes the number of workers in the following categories (**excluding people who live in military housing units**).
+
+-   Total population over 15 (DP3_0001C)
+
+-   Total population in the labor force (DP3_0002C)
+
+-   Total population in the civilian labor force (DP3_0003C)
+
+-   Total employed population in the civilian labor force (DP3_0004C)
+
+-   Total unemployed population in the civilian labor force (DP3_0005C)
+
+-   Total population serving in the armed forces (DP3_0006C)
+
+-   Total population over 15 that is not in the labor force (DP3_0007C)
+
+Unfortunately, *the island area census does not publish data at the census tract level*, so this data is only available for the entire island.
+
+```{r, message=FALSE}
+gu_variable_set <- c(civilian_workers = "DP3_0003C",
+                     armed_forces = "DP3_0006C")
+
+GU_workers <- get_decennial(geography = "state", 
+                            variables = gu_variable_set,
+                            sumfile = "dpgu")
+
+GU_workers |>
+  kable()
+```
+
+From this, we can see that in the 2020 census, 2,691 armed forces personnel lived in non-military housing units. According to [this website](https://installations.militaryonesource.mil/in-depth-overview/joint-region-marianas-naval-base-guam), there are 21,700 military members on Guam, so this means about 12 percent of all military members on Guam live off base.

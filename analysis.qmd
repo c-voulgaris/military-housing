@@ -433,7 +433,7 @@ onslow$map
 
 The United States Air Force Academy is located in El Paso County, Colorado.
 
-```{r}
+```{r, message=FALSE}
 
 el_paso <- map_tracts_mil(county_workers, "El Paso County, Colorado")
 
@@ -449,7 +449,7 @@ el_paso$map
 
 Fort Bragg (which was renamed Fort Liberty in 2023 and renamed back to Fort Bragg in 2025) is located in Cumberland County North Carolina.
 
-```{r}
+```{r, message=FALSE}
 
 cumberland <- map_tracts_mil(county_workers, "Cumberland County, North Carolina")
 
@@ -488,7 +488,7 @@ Naval Station Norfolk, in Norfolk, Virginia is the largest Naval installation in
 
 -   Joint Expeditionary Base East
 
-```{r}
+```{r, message=FALSE}
 
 norfolk <- map_tracts_mil(county_workers, "Norfolk city, Virginia")
 
@@ -548,7 +548,7 @@ bell$map
 
 Fort Bliss is located in El Paso County, Texas, and Holloman Air Force Base is located in the neighboring Otero County, New Mexico.
 
-```{r}
+```{r, message=FALSE}
 
 el_paso_tx <- map_tracts_mil(county_workers, "El Paso County, Texas")
 

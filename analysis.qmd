@@ -5,10 +5,12 @@ format:
     theme: minty
     toc: true
     toc-location: left
+    code-fold: true
+    code-summary: "Show code"
 editor: visual
 ---
 
-The purpose of this analysis is to identify locations where military personnel live in Virginia, Hawaii, and Guam.
+The purpose of this analysis is the identify the counties in the United States that have the highest concentration of military personnel residential locations, and to identify the distribution of military personnel within those counties.
 
 I draw on the following datasets:
 
@@ -19,6 +21,8 @@ I draw on the following datasets:
 This analysis uses the following R packages:
 
 ```{r, message=FALSE, warning=FALSE}
+options(tigris_use_cache = TRUE)
+
 library(tidyverse)
 library(tidycensus)
 library(tigris)
@@ -28,7 +32,7 @@ library(knitr)
 library(here)
 ```
 
-## American Community Survey
+## Distribution across counties
 
 Table B23025 in the American Community Survey includes data on the number of people over the age of 15 in each of the following employment categories:
 
@@ -46,155 +50,512 @@ Table B23025 in the American Community Survey includes data on the number of peo
 
 -   Total population over 15 that is not in the labor force (B23025_007)
 
-```{r, message=FALSE, results='hide'}
+I will load the number of armed forces personnel and the number of people in the civilian labor force for each county in the United States, and calculate:
+
+-   The percentage of the total workforce in each county that comprises military personnel
+
+-   The percentage of the total U.S.-based active-duty military force living in each county.
+
+The American Community Survey (2019-2023) indicates that there are are total of 1,291,134 military personnel stationed in the United States. [DoD data for June 2021](https://dwp.dmdc.osd.mil/dwp/api/downloadZ?fileId=111750&groupName=milRegionCountry) indicates that there were 1,206,986 military personnel assigned to the United States at that time and 172,881 stationed overseas (including 10 in the U.S. Virgin Islands, 20 in the Northern Mariana Islands, and 6,161 on Guam). To get a rough estimate of the total share of the the total military living in each of these counties, I will assume 200,000 troops overseas (to err on the side of underestimating the share of the total military in any county (this method would suggest that about 0.4 percent of military members were stationed in Guam during that period).
+
+```{r, message=FALSE}
 
 variable_set <- c(civil_ = "B23025_003",
                   milit_ = "B23025_006")
 
-VA_workers <- get_acs(geography = "tract",
-                      variables = variable_set,
-                      state = "Virginia",
-                      output = "wide",
-                      geometry = TRUE) |>
+county_workers <- get_acs(geography = "county",
+                          variables = variable_set,
+                          year = 2023,
+                          output = "wide",
+                          geometry = TRUE,
+                          progress_bar = FALSE) |>
   filter(milit_E > 0) |>
-  st_transform("WGS84")
+  st_transform("WGS84") |>
+  mutate(pct_military = milit_E / (milit_E + civil_E),
+         pct_of_military = milit_E / (sum(milit_E)+200000)) 
 
-HI_workers <- get_acs(geography = "tract",
-                      variables = variable_set,
-                      state = "Hawaii",
-                      output = "wide",
-                      geometry = TRUE)  |>
-  filter(milit_E > 0) |>
-  st_transform("WGS84")
 ```
 
-Let's take a look at the first few rows of the Virginia data set:
+I can also get very a rough indication of which military branches are located in each county, based on the names of military installations that the census uses as landmarks.
+
+```{r, results='hide', message=FALSE}
+
+installations <- military() |>
+  mutate(branch = case_when(str_detect(FULLNAME, "Army") ~ "Army",
+                            str_detect(FULLNAME, "Ft ") ~ "Army",
+                            str_detect(FULLNAME, "AFB") ~ "Air Force",
+                            str_detect(FULLNAME, "Naval") ~ "Navy",
+                            str_detect(FULLNAME, "Navy") ~ "Navy",
+                            str_detect(FULLNAME, "Marine Corps") ~ "Marines",
+                            str_detect(FULLNAME, "Coast Guard") ~ "Coast Guard",
+                            str_detect(FULLNAME, "Joint") ~ "Joint",
+                            str_detect(FULLNAME, "Fld") ~ "Air Force",
+                            str_detect(FULLNAME, "Air Force") ~ "Air Force",
+                            str_detect(FULLNAME, " Air ") ~ "Air Force",
+                            str_detect(FULLNAME, "Arprt") ~ "Air Force",
+                            str_detect(FULLNAME, "Nas") ~ "Navy",
+                            str_detect(FULLNAME, "Mil Res") ~ "Army",
+                            str_detect(FULLNAME, "Ng") ~ "Army",
+                            str_detect(FULLNAME, "Ang") ~ "Air Force",
+                            str_detect(FULLNAME, "Cp") ~ "Army",
+                            str_detect(FULLNAME, "Airfield") ~ "Air Force",
+                            str_detect(FULLNAME, "Air National Guard") ~ 
+                              "Air Force",
+                            str_detect(FULLNAME, "National Guard") ~ "Army",
+                            str_detect(FULLNAME, "Af") ~ "Air Force",
+                            str_detect(FULLNAME, "Nb") ~ "Navy",
+                            TRUE ~ "Unknown")) |>
+  st_transform("WGS84") 
+
+unclassified <- installations |>
+  filter(branch == "Unknown")
+
+maybe_army <- installations |>
+  filter(branch == "Army") |>
+  st_join(county_workers) |>
+  st_drop_geometry() |>
+  group_by(NAME) |>
+  summarize(maybe_army = n() > 0)
+
+maybe_AF <- installations |>
+  filter(branch == "Air Force") |>
+  st_join(county_workers) |>
+  st_drop_geometry() |>
+  group_by(NAME) |>
+  summarize(maybe_AF = n() > 0)
+
+maybe_marines <- installations |>
+  filter(branch == "Marines") |>
+  st_join(county_workers) |>
+  st_drop_geometry() |>
+  group_by(NAME) |>
+  summarize(maybe_marines = n() > 0)
+
+maybe_joint <- installations |>
+  filter(branch == "Joint")  |>
+  st_join(county_workers) |>
+  st_drop_geometry() |>
+  group_by(NAME) |>
+  summarize(maybe_joint = n() > 0)
+
+maybe_navy <- installations |>
+  filter(branch == "Navy")  |>
+  st_join(county_workers) |>
+  st_drop_geometry() |>
+  group_by(NAME) |>
+  summarize(maybe_navy = n() > 0)
+
+maybe_coast_guard <- installations |>
+  filter(branch == "Coast Guard")  |>
+  st_join(county_workers) |>
+  st_drop_geometry() |>
+  group_by(NAME) |>
+  summarize(maybe_CG = n() > 0)
+
+county_workers <- county_workers |>
+  left_join(maybe_AF) |>
+  left_join(maybe_army) |>
+  left_join(maybe_coast_guard) |>
+  left_join(maybe_joint) |>
+  left_join(maybe_marines) |>
+  left_join(maybe_navy) |>
+  replace_na(list(maybe_navy = FALSE,
+                  maybe_AF = FALSE,
+                  maybe_coast_guard = FALSE,
+                  maybe_joint = FALSE,
+                  maybe_marines = FALSE,
+                  maybe_army = FALSE,
+                  maybe_CG = FALSE)) |>
+  mutate(`Branch (guess)` = case_when(maybe_navy +
+                                    maybe_marines +
+                                    maybe_army +
+                                    maybe_joint +
+                                    maybe_CG +
+                                    maybe_AF > 1 ~ "Multiple",
+                                  maybe_joint ~ "Multiple",
+                                  maybe_navy ~ "Navy",
+                                  maybe_marines ~ "Marines",
+                                  maybe_army ~ "Army",
+                                  maybe_CG ~ "Coast Guard",
+                                  maybe_AF ~ "Air Force",
+                                  TRUE ~ "Unknown"))
+
+
+```
+
+Here are the twenty counties with the highest shares of the total workforce comprising military personnel.
 
 ```{r}
-head(VA_workers) |>
+
+top_pct_military <- county_workers |>
   st_drop_geometry() |>
+  mutate(`Percent military` = paste0(round(100*pct_military), "%")) |>
+  arrange(-pct_military) |>
+  head(n=20) 
+
+top_pct_military |>
+  select(NAME, `Percent military`, `Branch (guess)`) |>
   kable()
 ```
 
-You can see that we have an ID number for each census tract, a name of each census tract, and values for four variables:
-
--   **civil_E:** The estimated number of civilian workers in the census tract.
-
--   **civil_M:** The margin of error for that estimate a 90-percent confidence level
-
--   **milit_E:** The estimated number of workers in the armed forces
-
--   **milit_M:** The margin of error for that estimate at a 90-percent confidence level
-
-The Hawaii dataset has the same variables.
-
-We can visualize these data on a map. Here is Virginia:
+And here are the twenty counties where residents represent the highest shares of all U.S. military personnel.
 
 ```{r}
 
-VA_palette <- colorNumeric("viridis", 
-                           domain = log10(VA_workers$milit_E),
-                           reverse = TRUE)
+top_pct_of_military <- county_workers |>
+  st_drop_geometry() |>
+  mutate(`Percent of total military` = 
+           paste0(round(100*pct_of_military), "%")) |>
+  arrange(-pct_of_military) |>
+  head(n=20)
 
-VA_labels <- paste0(VA_workers$milit_E,
-                        " military personnel<br/>",
-                        VA_workers$civil_E,
-                        " civilian workers") |>
-  lapply(htmltools::HTML)
-
-leaflet(VA_workers) |>
-  addProviderTiles(provider = "CartoDB.Positron") |>
-  addPolygons(weight = 1,
-              color = NA,
-              fillColor = ~VA_palette(log10(milit_E)),
-              fillOpacity = 0.7,
-              highlightOptions = highlightOptions(weight = 3,
-                                                  fillOpacity = 0.5),
-              label = VA_labels) |>
-  addLegend(pal = VA_palette, 
-            values = ~log10(milit_E),
-            labFormat = labelFormat(prefix = "10^"),
-            opacity = 0.7, 
-            title = "Number of\narmed forces\npersonnel",
-  position = "bottomleft")
+top_pct_of_military|>
+  select(NAME, `Percent of total military`, `Branch (guess)`) |>
+  kable()
 ```
 
-And here is Hawaii:
+Approximately one third of the total U.S. military force lives in these 20 counties. Approximately one quarter lives in the top ten counties listed above.
+
+Counties that are noteworthy for having both a high military share of the population and an high share of the total military are Onslow County and Cumberland County in North Carolina, Jefferson County in New York, and Norfolk City in Virginia.
 
 ```{r}
-HI_palette <- colorNumeric("viridis", 
-                           domain = log10(HI_workers$milit_E),
+
+top_pct_military |>
+  filter(NAME %in% top_pct_of_military$NAME) |>
+    mutate(`Percent of total military` = 
+           paste0(round(100*pct_of_military), "%")) |>
+  select(NAME, 
+         `Percent military`,
+         `Percent of total military`, `Branch (guess)`) |>
+  kable()
+```
+
+## Distribution within regions
+
+The rest of this analysis will focus on the ten counties with the greatest numbers of military personnel, together with the counties immediately adjacent to them.
+
+Here's a function to grab tract-level data from the county of interest and all adjacent counties.
+
+```{r}
+
+map_tracts_mil <- function(counties,
+                           county_name) {
+  
+  variable_set <- c(civil_ = "B23025_003",
+                  milit_ = "B23025_006")
+  
+  buffer <- counties |>
+    filter(NAME == county_name) |>
+    st_buffer(dist = 3000)
+  
+  region <- counties |>
+    st_filter(buffer) |>
+    mutate(state_code = substr(GEOID, 1, 2))
+  
+  states <- unique(region$state_code)
+  
+  region_state_1 <- region |>
+    filter(state_code == states[1])
+  
+  tracts <- get_acs(geography = "tract",
+                    state = states[1],
+                    county = substr(region_state_1$GEOID, 3, 5),
+                    variables = variable_set,
+                    year = 2023,
+                    output = "wide",
+                    geometry = TRUE,
+                    progress_bar = FALSE)  |>
+  filter(milit_E > 0) |>
+  st_transform("WGS84") |>
+  mutate(pct_military = milit_E / (milit_E + civil_E),
+         pct_of_military = milit_E / (sum(counties$milit_E)+200000))
+  
+  if(length(states) > 1) {
+    for (i in 2:length(states)) {
+        
+      region_state_next <- region |>
+        filter(state_code == states[i])
+      
+      tracts_next <- get_acs(geography = "tract",
+                        state = states[i],
+                        county = substr(region_state_next$GEOID, 3, 5),
+                        variables = variable_set,
+                        year = 2023,
+                        output = "wide",
+                        geometry = TRUE,
+                        progress_bar = FALSE)  |>
+        filter(milit_E > 0) |>
+        st_transform("WGS84") |>
+        mutate(pct_military = milit_E / (milit_E + civil_E),
+               pct_of_military = milit_E / (sum(counties$milit_E)+200000))
+      
+      tracts <- rbind(tracts, tracts_next)
+    }
+  }
+  
+  tract_palette <- colorNumeric("viridis", 
+                           domain = log10(tracts$milit_E),
                            reverse = TRUE)
 
-HI_labels <- paste0(HI_workers$milit_E,
+  tract_labels <- paste0(tracts$milit_E,
                         " military personnel<br/>",
-                        HI_workers$civil_E,
+                        tracts$civil_E,
                         " civilian workers") |>
   lapply(htmltools::HTML)
 
-leaflet(HI_workers) |>
-  addProviderTiles(provider = "CartoDB.Positron") |>
-  addPolygons(weight = 1,
-              color = NA,
-              fillColor = ~HI_palette(log10(milit_E)),
-              fillOpacity = 0.7,
-              highlightOptions = highlightOptions(weight = 3,
-                                                  fillOpacity = 0.5),
-              label = HI_labels) |>
-  addLegend(pal = HI_palette, 
-            values = ~log10(milit_E),
-            labFormat = labelFormat(prefix = "10^"),
-            opacity = 0.7, 
-            title = "Number of\narmed forces\npersonnel",
-  position = "bottomleft")
+  map <- leaflet(tracts) |>
+    addProviderTiles(provider = "CartoDB.Positron") |>
+    addPolygons(weight = 1,
+                color = NA,
+                fillColor = ~tract_palette(log10(milit_E)),
+                fillOpacity = 0.7,
+                highlightOptions = highlightOptions(weight = 3,
+                                                    fillOpacity = 0.5),
+                label = tract_labels) |>
+    addLegend(pal = tract_palette, 
+              values = ~log10(milit_E),
+              labFormat = labelFormat(prefix = "10^"),
+              opacity = 0.7, 
+              title = "Number of\narmed forces\npersonnel",
+    position = "bottomleft")
+
+
+  data <- tracts |>
+    st_drop_geometry() |>
+    mutate(County = str_extract(NAME, "(?<=;\\s).*")) |>
+    mutate(County = str_replace(County, ";", ",")) |>
+    group_by(County) |>
+    summarise(`Estimated number of military personnel` = sum(milit_E),
+              `Estimated percent of total military force` = 
+                100*sum(pct_of_military)) |>
+    ungroup()
+  
+  data_sums <- tibble(County = "Total",
+                      `Estimated number of military personnel` =
+                        sum(data$`Estimated number of military personnel`),
+                       `Estimated percent of total military force` = 
+                        sum(data$`Estimated percent of total military force`))
+    
+  data = rbind(data, data_sums)
+  
+  list(map = map, data = data)
+  
+}
+
 ```
 
-And we can export these layers to a shapefile in case we want to work with them further in ArcGIS or QGIS.
+### San Diego County, California
 
-```{r, warning=FALSE, message=FALSE, results='hide'}
-st_write(VA_workers,
-           dsn = here("shapefiles",
-                      "Virginia"),
-           driver = "ESRI Shapefile",
-         append = FALSE)
+Here is a table showing the number of military members in San Diego County and the adjacent counties.
 
-st_write(HI_workers,
-           dsn = here("shapefiles",
-                      "Hawaii"),
-           driver = "ESRI Shapefile",
-         append = FALSE)
-```
+There are many military installations in this area, including:
 
-## Decennial Island Area Census
+-   Amphibious Base Coronado East
 
-Guam is not included in the American Community Survey. Similar data is collected in the Island Area Survey as part of the decennial census. Table DP3 includes the number of workers in the following categories (**excluding people who live in military housing units**).
+-   Chocolate Mountains Aerial Gunnery Range
 
--   Total population over 15 (DP3_0001C)
+-   Holtville Carrier Landing Site
 
--   Total population in the labor force (DP3_0002C)
+-   Los Alamitos Reserve Center and Air Station
 
--   Total population in the civilian labor force (DP3_0003C)
+-   March Air Force Base
 
--   Total employed population in the civilian labor force (DP3_0004C)
+-   Camp Pendleton
 
--   Total unemployed population in the civilian labor force (DP3_0005C)
+-   Marine Corps Air Station Miramar
 
--   Total population serving in the armed forces (DP3_0006C)
+-   Naval Base Point Loma
 
--   Total population over 15 that is not in the labor force (DP3_0007C)
+-   Naval Base San Diego
 
-Unfortunately, *the island area census does not publish data at the census tract level*, so this data is only available for the entire island.
+-   Yuma Proving Ground
 
 ```{r, message=FALSE}
-gu_variable_set <- c(civilian_workers = "DP3_0003C",
-                     armed_forces = "DP3_0006C")
 
-GU_workers <- get_decennial(geography = "state", 
-                            variables = gu_variable_set,
-                            sumfile = "dpgu")
+san_diego <- map_tracts_mil(county_workers, "San Diego County, California")
 
-GU_workers |>
-  kable()
+kable(san_diego$data, digits = 1)
+
 ```
 
-From this, we can see that in the 2020 census, 2,691 armed forces personnel lived in non-military housing units. According to [this website](https://installations.militaryonesource.mil/in-depth-overview/joint-region-marianas-naval-base-guam), there are 21,700 military members on Guam, so this means about 12 percent of all military members on Guam live off base.
+And here is an interactive map of the number of military personnel in each tract across those counties.
+
+```{r}
+
+san_diego$map
+```
+
+### Honolulu County, Hawaii
+
+The following military installations are located in Honolulu County:
+
+-   Marine Corps Base Hawaii
+
+-   Fort Shafter (Army)
+
+-   Joint Base Pearl Harbor-Hickam (Navy/Air Force)
+
+-   Integrated Support Command Honolulu (Coast Guard)
+
+-   Schofield Barracks (Army)
+
+```{r, message=FALSE}
+
+honolulu <- map_tracts_mil(county_workers, "Honolulu County, Hawaii")
+
+kable(honolulu$data, digits = 1)
+```
+
+And here is an interactive map of the number of military personnel in each tract on the island.
+
+```{r}
+
+honolulu$map
+```
+
+### Onslow County, North Carolina
+
+Marine Corps Base Camp Lejeune and Marine Corps Air Station New River are both in Onslow County, North Carolina.
+
+```{r, message=FALSE}
+
+onslow <- map_tracts_mil(county_workers, "Onslow County, North Carolina")
+
+kable(onslow$data, digits = 1)
+```
+
+```{r}
+
+onslow$map
+```
+
+### El Paso County, Colorado
+
+The United States Air Force Academy is located in El Paso County, Colorado.
+
+```{r}
+
+el_paso <- map_tracts_mil(county_workers, "El Paso County, Colorado")
+
+kable(el_paso$data, digits = 1)
+```
+
+```{r}
+
+el_paso$map
+```
+
+### Cumberland County, North Carolina
+
+Fort Bragg (which was renamed Fort Liberty in 2023 and renamed back to Fort Bragg in 2025) is located in Cumberland County North Carolina.
+
+```{r}
+
+cumberland <- map_tracts_mil(county_workers, "Cumberland County, North Carolina")
+
+kable(cumberland$data, digits = 1)
+```
+
+### Bexar County, Texas
+
+The following military installations are in Bexar County, Texas:
+
+-   Camp Bullis (Army)
+
+-   Joint Base San Antonio, which includes
+
+    -   Randolph Air Force Base
+
+    -   Lackland Air Force Base
+
+    -   Fort Sam Houston (Army)
+
+```{r, message=FALSE}
+
+bexar <- map_tracts_mil(county_workers, "Bexar County, Texas")
+
+kable(bexar$data, digits = 1)
+
+```
+
+### Norfolk city and Virginia Beach city, Virginia
+
+Naval Station Norfolk, in Norfolk, Virginia is the largest Naval installation in the world. The adjacent city of Virginia Beach is also home to several military bases including:
+
+-   Naval Air Station Oceana
+
+-   Training Support Center Hampton Roads
+
+-   Joint Expeditionary Base East
+
+```{r}
+
+norfolk <- map_tracts_mil(county_workers, "Norfolk city, Virginia")
+
+kable(norfolk$data, digits = 1)
+```
+
+```{r}
+
+norfolk$map
+```
+
+### Pierce County, Washington
+
+Pierce County is home to Joint Base Lewis-McChord, a joint base serving the Army and the Air Force.
+
+The neighboring Kitsap County also includes the following naval installations:
+
+-   Naval Station Bremerton
+
+-   Submarine Base Bangor
+
+-   Keyport
+
+-   Manchester Fuel Depot
+
+-   Jackson Park Housing
+
+```{r, message=FALSE}
+
+pierce <- map_tracts_mil(county_workers, "Pierce County, Washington")
+
+kable(pierce$data, digits = 1)
+```
+
+```{r}
+
+pierce$map
+```
+
+### Bell County, Texas
+
+Fort Cavazos (formerly Fort Hood) is a very large army base that straddles Bell County and Coryell County in Texas.
+
+```{r, message=FALSE}
+
+bell <- map_tracts_mil(county_workers, "Bell County, Texas")
+
+kable(bell$data, digits = 1)
+```
+
+```{r}
+
+bell$map
+```
+
+### El Paso County, Texas
+
+Fort Bliss is located in El Paso County, Texas, and Holloman Air Force Base is located in the neighboring Otero County, New Mexico.
+
+```{r}
+
+el_paso_tx <- map_tracts_mil(county_workers, "El Paso County, Texas")
+
+kable(el_paso_tx$data, digits = 1)
+```
+
+```{r}
+
+el_paso_tx$map
+```

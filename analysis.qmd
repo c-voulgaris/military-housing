@@ -50,11 +50,7 @@ Table B23025 in the American Community Survey includes data on the number of peo
 
 -   Total population over 15 that is not in the labor force (B23025_007)
 
-I will load the number of armed forces personnel and the number of people in the civilian labor force for each county in the United States, and calculate:
-
--   The percentage of the total workforce in each county that comprises military personnel
-
--   The percentage of the total U.S.-based active-duty military force living in each county.
+I will load the number of armed forces personnel and the number of people in the civilian labor force for each county in the United States, and calculate the percentage of the total U.S.-based active-duty military force living in each county.
 
 The American Community Survey (2019-2023) indicates that there are are total of 1,291,134 military personnel stationed in the United States. [DoD data for June 2021](https://dwp.dmdc.osd.mil/dwp/api/downloadZ?fileId=111750&groupName=milRegionCountry) indicates that there were 1,206,986 military personnel assigned to the United States at that time and 172,881 stationed overseas (including 10 in the U.S. Virgin Islands, 20 in the Northern Mariana Islands, and 6,161 on Guam). To get a rough estimate of the total share of the the total military living in each of these counties, I will assume 200,000 troops overseas (to err on the side of underestimating the share of the total military in any county (this method would suggest that about 0.4 percent of military members were stationed in Guam during that period).
 
@@ -71,8 +67,7 @@ county_workers <- get_acs(geography = "county",
                           progress_bar = FALSE) |>
   filter(milit_E > 0) |>
   st_transform("WGS84") |>
-  mutate(pct_military = milit_E / (milit_E + civil_E),
-         pct_of_military = milit_E / (sum(milit_E)+200000)) 
+  mutate(pct_of_military = milit_E / (sum(milit_E)+200000)) 
 
 ```
 
@@ -183,22 +178,7 @@ county_workers <- county_workers |>
 
 ```
 
-Here are the twenty counties with the highest shares of the total workforce comprising military personnel.
-
-```{r}
-
-top_pct_military <- county_workers |>
-  st_drop_geometry() |>
-  mutate(`Percent military` = paste0(round(100*pct_military), "%")) |>
-  arrange(-pct_military) |>
-  head(n=20) 
-
-top_pct_military |>
-  select(NAME, `Percent military`, `Branch (guess)`) |>
-  kable()
-```
-
-And here are the twenty counties where residents represent the highest shares of all U.S. military personnel.
+Here are the twenty counties where residents represent the highest shares of all U.S. military personnel.
 
 ```{r}
 
@@ -216,36 +196,25 @@ top_pct_of_military|>
 
 Approximately one third of the total U.S. military force lives in these 20 counties. Approximately one quarter lives in the top ten counties listed above.
 
-Counties that are noteworthy for having both a high military share of the population and an high share of the total military are Onslow County and Cumberland County in North Carolina, Jefferson County in New York, and Norfolk City in Virginia.
+Some of the counties are in fairly close proximity to one another and are considered to be part of the same region for the analysis below.
+
+## Distribution within regions (tract-level)
+
+The rest of this analysis will focus on the ten regions with the greatest numbers of military personnel, together with the counties immediately adjacent to them.
+
+Here's a function to grab tract- or block-group-level data from the county of interest and all adjacent counties.
 
 ```{r}
 
-top_pct_military |>
-  filter(NAME %in% top_pct_of_military$NAME) |>
-    mutate(`Percent of total military` = 
-           paste0(round(100*pct_of_military), "%")) |>
-  select(NAME, 
-         `Percent military`,
-         `Percent of total military`, `Branch (guess)`) |>
-  kable()
-```
-
-## Distribution within regions
-
-The rest of this analysis will focus on the ten counties with the greatest numbers of military personnel, together with the counties immediately adjacent to them.
-
-Here's a function to grab tract-level data from the county of interest and all adjacent counties.
-
-```{r}
-
-map_tracts_mil <- function(counties,
-                           county_name) {
+map_detail_mil <- function(counties,
+                           county_name,
+                           level) {
   
   variable_set <- c(civil_ = "B23025_003",
                   milit_ = "B23025_006")
   
   buffer <- counties |>
-    filter(NAME == county_name) |>
+    filter(NAME %in% county_name) |>
     st_buffer(dist = 3000)
   
   region <- counties |>
@@ -257,7 +226,7 @@ map_tracts_mil <- function(counties,
   region_state_1 <- region |>
     filter(state_code == states[1])
   
-  tracts <- get_acs(geography = "tract",
+  subarea <- get_acs(geography = level,
                     state = states[1],
                     county = substr(region_state_1$GEOID, 3, 5),
                     variables = variable_set,
@@ -266,9 +235,7 @@ map_tracts_mil <- function(counties,
                     geometry = TRUE,
                     progress_bar = FALSE)  |>
   filter(milit_E > 0) |>
-  st_transform("WGS84") |>
-  mutate(pct_military = milit_E / (milit_E + civil_E),
-         pct_of_military = milit_E / (sum(counties$milit_E)+200000))
+  st_transform("WGS84") 
   
   if(length(states) > 1) {
     for (i in 2:length(states)) {
@@ -276,7 +243,7 @@ map_tracts_mil <- function(counties,
       region_state_next <- region |>
         filter(state_code == states[i])
       
-      tracts_next <- get_acs(geography = "tract",
+      subarea_next <- get_acs(geography = level,
                         state = states[i],
                         county = substr(region_state_next$GEOID, 3, 5),
                         variables = variable_set,
@@ -285,34 +252,32 @@ map_tracts_mil <- function(counties,
                         geometry = TRUE,
                         progress_bar = FALSE)  |>
         filter(milit_E > 0) |>
-        st_transform("WGS84") |>
-        mutate(pct_military = milit_E / (milit_E + civil_E),
-               pct_of_military = milit_E / (sum(counties$milit_E)+200000))
+        st_transform("WGS84") 
       
-      tracts <- rbind(tracts, tracts_next)
+      subarea <- rbind(subarea, subarea_next)
     }
   }
   
-  tract_palette <- colorNumeric("viridis", 
-                           domain = log10(tracts$milit_E),
+  subarea_palette <- colorNumeric("viridis", 
+                           domain = log10(subarea$milit_E),
                            reverse = TRUE)
 
-  tract_labels <- paste0(tracts$milit_E,
+  subarea_labels <- paste0(subarea$milit_E,
                         " military personnel<br/>",
-                        tracts$civil_E,
+                        subarea$civil_E,
                         " civilian workers") |>
   lapply(htmltools::HTML)
 
-  map <- leaflet(tracts) |>
+  map <- leaflet(subarea) |>
     addProviderTiles(provider = "CartoDB.Positron") |>
     addPolygons(weight = 1,
                 color = NA,
-                fillColor = ~tract_palette(log10(milit_E)),
+                fillColor = ~subarea_palette(log10(milit_E)),
                 fillOpacity = 0.7,
                 highlightOptions = highlightOptions(weight = 3,
                                                     fillOpacity = 0.5),
-                label = tract_labels) |>
-    addLegend(pal = tract_palette, 
+                label = subarea_labels) |>
+    addLegend(pal = subarea_palette, 
               values = ~log10(milit_E),
               labFormat = labelFormat(prefix = "10^"),
               opacity = 0.7, 
@@ -320,15 +285,16 @@ map_tracts_mil <- function(counties,
     position = "bottomleft")
 
 
-  data <- tracts |>
+  data <- region |>
     st_drop_geometry() |>
-    mutate(County = str_extract(NAME, "(?<=;\\s).*")) |>
-    mutate(County = str_replace(County, ";", ",")) |>
-    group_by(County) |>
-    summarise(`Estimated number of military personnel` = sum(milit_E),
-              `Estimated percent of total military force` = 
-                100*sum(pct_of_military)) |>
-    ungroup()
+    rename(`Estimated number of military personnel` = milit_E,
+           County = NAME) |>
+    mutate(`Estimated percent of total military force` = 
+                100*pct_of_military) |> 
+    select(County,
+           `Estimated number of military personnel`,
+           `Estimated percent of total military force`) |>
+    arrange(-`Estimated number of military personnel`)
   
   data_sums <- tibble(County = "Total",
                       `Estimated number of military personnel` =
@@ -344,9 +310,9 @@ map_tracts_mil <- function(counties,
 
 ```
 
-### San Diego County, California
+### San Diego and San Bernardino Counties, California
 
-Here is a table showing the number of military members in San Diego County and the adjacent counties.
+Here is a table showing the number of military members in San Diego and San Bernardino Counties and the adjacent counties.
 
 There are many military installations in this area, including:
 
@@ -372,7 +338,10 @@ There are many military installations in this area, including:
 
 ```{r, message=FALSE}
 
-san_diego <- map_tracts_mil(county_workers, "San Diego County, California")
+san_diego <- map_detail_mil(county_workers, 
+                            c("San Diego County, California",
+                              "San Bernardino County, California"),
+                            level = "tract")
 
 kable(san_diego$data, digits = 1)
 
@@ -401,7 +370,9 @@ The following military installations are located in Honolulu County:
 
 ```{r, message=FALSE}
 
-honolulu <- map_tracts_mil(county_workers, "Honolulu County, Hawaii")
+honolulu <- map_detail_mil(county_workers, 
+                           "Honolulu County, Hawaii",
+                           level = "tract")
 
 kable(honolulu$data, digits = 1)
 ```
@@ -413,13 +384,18 @@ And here is an interactive map of the number of military personnel in each tract
 honolulu$map
 ```
 
-### Onslow County, North Carolina
+### Onslow and Cumberland Counties, North Carolina
 
-Marine Corps Base Camp Lejeune and Marine Corps Air Station New River are both in Onslow County, North Carolina.
+Onslow and Cumberland County represent adjacent regions in North Carolina.
+
+Marine Corps Base Camp Lejeune and Marine Corps Air Station New River are both in Onslow County. Fort Bragg (which was renamed Fort Liberty in 2023 and renamed back to Fort Bragg in 2025) is located in Cumberland County.
 
 ```{r, message=FALSE}
 
-onslow <- map_tracts_mil(county_workers, "Onslow County, North Carolina")
+onslow <- map_detail_mil(county_workers, 
+                         c("Onslow County, North Carolina",
+                           "Cumberland County, North Carolina"),
+                         level = "tract")
 
 kable(onslow$data, digits = 1)
 ```
@@ -431,11 +407,13 @@ onslow$map
 
 ### El Paso County, Colorado
 
-The United States Air Force Academy is located in El Paso County, Colorado.
+The United States Air Force Academy is located in El Paso County, Colorado, as is Fort Carson, which is an Army post.
 
 ```{r, message=FALSE}
 
-el_paso <- map_tracts_mil(county_workers, "El Paso County, Colorado")
+el_paso <- map_detail_mil(county_workers, 
+                          "El Paso County, Colorado",
+                          level = "tract")
 
 kable(el_paso$data, digits = 1)
 ```
@@ -443,17 +421,6 @@ kable(el_paso$data, digits = 1)
 ```{r}
 
 el_paso$map
-```
-
-### Cumberland County, North Carolina
-
-Fort Bragg (which was renamed Fort Liberty in 2023 and renamed back to Fort Bragg in 2025) is located in Cumberland County North Carolina.
-
-```{r, message=FALSE}
-
-cumberland <- map_tracts_mil(county_workers, "Cumberland County, North Carolina")
-
-kable(cumberland$data, digits = 1)
 ```
 
 ### Bexar County, Texas
@@ -472,7 +439,9 @@ The following military installations are in Bexar County, Texas:
 
 ```{r, message=FALSE}
 
-bexar <- map_tracts_mil(county_workers, "Bexar County, Texas")
+bexar <- map_detail_mil(county_workers, 
+                        "Bexar County, Texas",
+                        level = "tract")
 
 kable(bexar$data, digits = 1)
 
@@ -490,7 +459,10 @@ Naval Station Norfolk, in Norfolk, Virginia is the largest Naval installation in
 
 ```{r, message=FALSE}
 
-norfolk <- map_tracts_mil(county_workers, "Norfolk city, Virginia")
+norfolk <- map_detail_mil(county_workers, 
+                          c("Norfolk city, Virginia",
+                            "Virginia Beach city, Virginia"),
+                          level = "tract")
 
 kable(norfolk$data, digits = 1)
 ```
@@ -500,7 +472,7 @@ kable(norfolk$data, digits = 1)
 norfolk$map
 ```
 
-### Pierce County, Washington
+### Pierce and Kitsap Countes, Washington
 
 Pierce County is home to Joint Base Lewis-McChord, a joint base serving the Army and the Air Force.
 
@@ -518,7 +490,10 @@ The neighboring Kitsap County also includes the following naval installations:
 
 ```{r, message=FALSE}
 
-pierce <- map_tracts_mil(county_workers, "Pierce County, Washington")
+pierce <- map_detail_mil(county_workers, 
+                         c("Pierce County, Washington",
+                           "Kitsap County, Washington"),
+                         level = "tract")
 
 kable(pierce$data, digits = 1)
 ```
@@ -534,7 +509,9 @@ Fort Cavazos (formerly Fort Hood) is a very large army base that straddles Bell 
 
 ```{r, message=FALSE}
 
-bell <- map_tracts_mil(county_workers, "Bell County, Texas")
+bell <- map_detail_mil(county_workers, 
+                       "Bell County, Texas",
+                       level = "tract")
 
 kable(bell$data, digits = 1)
 ```
@@ -550,7 +527,9 @@ Fort Bliss is located in El Paso County, Texas, and Holloman Air Force Base is l
 
 ```{r, message=FALSE}
 
-el_paso_tx <- map_tracts_mil(county_workers, "El Paso County, Texas")
+el_paso_tx <- map_detail_mil(county_workers, 
+                             "El Paso County, Texas",
+                             level = "tract")
 
 kable(el_paso_tx$data, digits = 1)
 ```
@@ -558,4 +537,200 @@ kable(el_paso_tx$data, digits = 1)
 ```{r}
 
 el_paso_tx$map
+```
+
+### Washington, DC area
+
+There are several miliary installations in the Washington, DC area, including
+the Pentagon and the United States Naval Academy.
+
+```{r, message=FALSE}
+
+dc_area <- map_detail_mil(county_workers, 
+                             c("Fairfax County, Virginia",
+                               "Anne Arundel County, Maryland"),
+                             level = "tract")
+
+kable(dc_area$data, digits = 1)
+```
+
+```{r}
+
+dc_area$map
+
+```
+
+
+## Distribution within regions (block-group level)
+
+In case Census tracts are not specific enough, we can also see the distribution of military personnel within regions at the census block group level. Note that estimate uncertainty is greater for lower-level geographies. In other words, reported estimates for the number of military personnel in a county are generally going to be more accurate than those for the number in a census tract, and estimates for census tracts will be more accurate than those for census block groups.
+
+### San Diego and San Bernardino Counties, California
+
+```{r, message=FALSE}
+
+san_diego_bgs <- map_detail_mil(county_workers,
+                                c("San Diego County, California",
+                                  "San Bernardino County, California"),
+                                level = "block group")
+
+san_diego_bgs$map
+```
+
+### Honolulu County, Hawaii
+
+```{r, message=FALSE}
+
+honolulu_bgs <- map_detail_mil(county_workers,
+                                "Honolulu County, Hawaii",
+                                level = "block group")
+
+honolulu_bgs$map
+```
+
+### Onslow and Cumberland Counties, North Carolina
+
+```{r, message=FALSE}
+
+onslow_bgs <- map_detail_mil(county_workers,
+                                c("Onslow County, North Carolina",
+                                  "Cumberland County, North Carolina"),
+                                level = "block group")
+
+onslow_bgs$map
+```
+
+### El Paso County, Colorado
+
+```{r, message=FALSE}
+
+el_paso_co_bgs <- map_detail_mil(county_workers,
+                                "El Paso County, Colorado",
+                                level = "block group")
+
+el_paso_co_bgs$map
+```
+
+
+
+### Bexar County, Texas
+
+```{r, message=FALSE}
+
+bexar_bgs <- map_detail_mil(county_workers,
+                                "Bexar County, Texas",
+                                level = "block group")
+
+bexar_bgs$map
+```
+
+### Norfolk City and Virgina Beach City, Virginia
+
+```{r, message=FALSE}
+
+norfolk_bgs <- map_detail_mil(county_workers,
+                                c("Norfolk city, Virginia",
+                                  "Virginia Beach city, Virginia"),
+                                level = "block group")
+
+norfolk_bgs$map
+
+```
+
+### Pierce and Kitsap Counties, Washington
+
+```{r, message=FALSE}
+
+pierce_bgs <- map_detail_mil(county_workers, 
+                         c("Pierce County, Washington",
+                           "Kitsap County, Washington"),
+                         level = "block group")
+
+pierce_bgs$map
+```
+
+### Bell County, Texas
+
+```{r, message=FALSE}
+
+bell_bg <- map_detail_mil(county_workers, 
+                       "Bell County, Texas",
+                       level = "block group")
+
+bell_bg$map
+```
+
+### El Paso County, Texas
+
+```{r, message=FALSE}
+
+
+el_paso_tx_bgs <- map_detail_mil(county_workers,
+                                "El Paso County, Texas",
+                                level = "block group")
+
+el_paso_tx_bgs$map
+```
+
+
+### Washington, DC Area
+
+```{r, message=FALSE}
+
+dc_area_bg <- map_detail_mil(county_workers, 
+                             c("Fairfax County, Virginia",
+                               "Anne Arundel County, Maryland"),
+                             level = "block group")
+
+dc_area_bg$map
+```
+
+
+## Total personnel across ten regions
+
+These are the total estimated military personnel across the ten regions described above.
+
+```{r}
+
+all_regions <- list(`San Diego and San Bernardino` = san_diego$data,
+                    Honolulu = honolulu$data,
+                    `Onslow and Cumberland` = onslow$data,
+                    `Colorado Springs` = el_paso$data,
+                    `Bexar, Texas` = bexar$data,
+                    `Norfolk and Virginia Beach` = norfolk$data,
+                    `Pierce and Kitsap` = pierce$data,
+                    `Bell, Texas` = bell$data,
+                    `El Paso, Texas` = el_paso_tx$data,
+                    `DC Area` = dc_area$data)
+
+region_totals <- tibble(Region = "none",
+                        `Estimated number of military personnel` = 0,
+                        `Estimated percent of total military force` = 0) |>
+  filter(Region != "none")
+
+
+for (i in 1:length(all_regions)) {
+  
+  next_region <- all_regions[[i]] |>
+    filter(County == "Total") |>
+    mutate(Region = names(all_regions)[i]) |>
+    select(Region,
+           `Estimated number of military personnel`,
+           `Estimated percent of total military force`)
+  
+  region_totals <- rbind(region_totals, next_region)
+}
+
+region_sums = tibble(Region = "Total",
+                     `Estimated number of military personnel` = 
+                       sum(region_totals$`Estimated number of military personnel`),
+                     `Estimated percent of total military force` = 
+                       sum(region_totals$`Estimated percent of total military force`))
+
+region_totals <- arrange(region_totals, -`Estimated number of military personnel`) |>
+  rbind(region_sums)
+
+region_totals |>
+  kable(digits = 1, format.args = list(big.mark = ","))
+
 ```
